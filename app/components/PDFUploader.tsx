@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import type { UploadResponse } from '@/lib/types';
 
 interface PDFUploaderProps {
-  onUploadComplete: (fileUri: string, fileName: string) => void;
+  onUploadComplete: (response: UploadResponse) => void;
 }
 
 export function PDFUploader({ onUploadComplete }: PDFUploaderProps) {
@@ -22,11 +23,13 @@ export function PDFUploader({ onUploadComplete }: PDFUploaderProps) {
 
     setUploading(true);
     setError('');
-    setProgress('Laddar upp och indexerar PDF...');
+    setProgress('Laddar upp PDF...');
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+
+      setProgress('Bearbetar dokument och extraherar sidor...');
 
       const uploadResponse = await fetch('/api/upload-pdf', {
         method: 'POST',
@@ -38,11 +41,11 @@ export function PDFUploader({ onUploadComplete }: PDFUploaderProps) {
         throw new Error(data.error || 'Kunde inte ladda upp PDF');
       }
 
-      const { fileUri } = await uploadResponse.json();
+      const response: UploadResponse = await uploadResponse.json();
 
-      setProgress('Klar!');
+      setProgress(`Klar! ${response.images.length} sidor extraherade.`);
       setTimeout(() => {
-        onUploadComplete(fileUri, file.name);
+        onUploadComplete(response);
       }, 500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ett fel uppstod');
