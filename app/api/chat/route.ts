@@ -1,12 +1,52 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextRequest, NextResponse } from 'next/server';
-import { ChatRequest, ChatResponse, Citation, Message } from '@/lib/types';
+import { ChatRequest, ChatResponse, Citation, Message, ExtractedImage } from '@/lib/types';
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 
+/**
+ * Build system instruction with image references
+ */
+function buildSystemInstruction(images?: ExtractedImage[]): string {
+  const baseInstruction = `Du är en dokumentassistent som ENDAST svarar baserat på innehållet i det bifogade PDF-dokumentet.
+
+STRIKTA REGLER:
+1. Svara ENDAST med information som finns i PDF-dokumentet
+2. Om informationen INTE finns i dokumentet, säg tydligt: "Jag kan inte hitta information om detta i dokumentet."
+3. Citera eller referera till specifika delar av dokumentet när du svarar
+4. Gissa eller hitta på ALDRIG information
+5. Om frågan är otydlig, be om förtydligande
+6. Svara på samma språk som användaren skriver
+
+Kom ihåg: Det är bättre att säga "jag vet inte" än att ge felaktig information.`;
+
+  if (!images || images.length === 0) {
+    return baseInstruction;
+  }
+
+  // Build image reference section
+  const imageList = images
+    .map(img => `- ${img.label} (${img.id})`)
+    .join('\n');
+
+  const imageInstruction = `
+
+DOKUMENTETS SIDOR:
+Dokumentet har följande sidor som bilder:
+${imageList}
+
+BILDREFERENSER:
+- När du beskriver monteringssteg eller instruktioner, referera ALLTID till relevant sida
+- Använd formatet: [Se ${images[0]?.label || 'Sida X'}] för att hänvisa till en specifik sida
+- Om en fråga handlar om något visuellt (diagram, bild, illustration), ange vilken sida det finns på
+- Exempel: "Enligt instruktionerna [Se Sida 3] ska du först..."`;
+
+  return baseInstruction + imageInstruction;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { fileUri, message, history = [] }: ChatRequest = await request.json();
+    const { fileUri, message, history = [], images }: ChatRequest = await request.json();
 
     if (!fileUri || !message) {
       return NextResponse.json(
@@ -17,17 +57,7 @@ export async function POST(request: NextRequest) {
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-3-flash-preview',
-      systemInstruction: `Du är en dokumentassistent som ENDAST svarar baserat på innehållet i det bifogade PDF-dokumentet.
-
-STRIKTA REGLER:
-1. Svara ENDAST med information som finns i PDF-dokumentet
-2. Om informationen INTE finns i dokumentet, säg tydligt: "Jag kan inte hitta information om detta i dokumentet."
-3. Citera eller referera till specifika delar av dokumentet när du svarar
-4. Gissa eller hitta på ALDRIG information
-5. Om frågan är otydlig, be om förtydligande
-6. Svara på samma språk som användaren skriver
-
-Kom ihåg: Det är bättre att säga "jag vet inte" än att ge felaktig information.`,
+      systemInstruction: buildSystemInstruction(images),
     });
 
     // Build conversation history - include file reference in each user message

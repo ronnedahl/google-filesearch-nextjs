@@ -1,13 +1,64 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { Message } from '@/lib/types';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import type { Message, ExtractedImage } from '@/lib/types';
 
 interface ChatInterfaceProps {
   fileUri: string;
+  images: ExtractedImage[];
+  onPageReference?: (pageNumber: number) => void;  // Callback when AI references a page
 }
 
-export function ChatInterface({ fileUri }: ChatInterfaceProps) {
+/**
+ * Parse AI response to find page references like [Se Sida 3]
+ */
+function parsePageReferences(text: string): number[] {
+  const regex = /\[Se Sida (\d+)\]/gi;
+  const matches = [...text.matchAll(regex)];
+  return matches.map(match => parseInt(match[1], 10));
+}
+
+/**
+ * Format message content with clickable page references
+ */
+function formatMessageContent(
+  content: string,
+  onPageClick: (pageNumber: number) => void
+): React.ReactNode {
+  const parts = content.split(/(\[Se Sida \d+\])/gi);
+
+  return parts.map((part, index) => {
+    const match = part.match(/\[Se Sida (\d+)\]/i);
+    if (match) {
+      const pageNumber = parseInt(match[1], 10);
+      return (
+        <button
+          key={index}
+          onClick={() => onPageClick(pageNumber)}
+          className="inline-flex items-center px-2 py-0.5 mx-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors text-sm font-medium"
+        >
+          <svg
+            className="w-3 h-3 mr-1"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
+          </svg>
+          Sida {pageNumber}
+        </button>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
+}
+
+export function ChatInterface({ fileUri, images, onPageReference }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,6 +71,10 @@ export function ChatInterface({ fileUri }: ChatInterfaceProps) {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const handlePageClick = useCallback((pageNumber: number) => {
+    onPageReference?.(pageNumber);
+  }, [onPageReference]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -38,7 +93,8 @@ export function ChatInterface({ fileUri }: ChatInterfaceProps) {
         body: JSON.stringify({
           fileUri,
           message: input,
-          history: messages
+          history: messages,
+          images  // Pass images for AI context
         })
       });
 
@@ -55,6 +111,13 @@ export function ChatInterface({ fileUri }: ChatInterfaceProps) {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+
+      // Check for page references in the response
+      const pageRefs = parsePageReferences(data.answer);
+      if (pageRefs.length > 0 && onPageReference) {
+        // Highlight the first referenced page
+        onPageReference(pageRefs[0]);
+      }
     } catch (error) {
       console.error('Chat error:', error);
       const errorMessage: Message = {
@@ -75,12 +138,15 @@ export function ChatInterface({ fileUri }: ChatInterfaceProps) {
   };
 
   return (
-    <div className="flex flex-col h-[600px] max-w-4xl mx-auto bg-white rounded-lg shadow">
+    <div className="flex flex-col h-[600px] bg-white rounded-lg shadow">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
           <div className="text-center text-gray-500 mt-8">
-            <p>Ställ en fråga om PDF-dokumentet</p>
+            <p className="mb-2">Ställ en fråga om PDF-dokumentet</p>
+            <p className="text-sm text-gray-400">
+              AI:n kommer referera till specifika sidor när det är relevant
+            </p>
           </div>
         )}
 
@@ -90,13 +156,18 @@ export function ChatInterface({ fileUri }: ChatInterfaceProps) {
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] rounded-lg p-4 ${
+              className={`max-w-[85%] rounded-lg p-4 ${
                 msg.role === 'user'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 text-gray-900'
               }`}
             >
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              <div className="whitespace-pre-wrap">
+                {msg.role === 'model'
+                  ? formatMessageContent(msg.content, handlePageClick)
+                  : msg.content
+                }
+              </div>
 
               {msg.citations && msg.citations.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-gray-300">
